@@ -4,7 +4,7 @@
 
 #ifdef BOARD_WT32_ETH01
   #include <ETH.h>
-  // LAN8720 pins for WT32-ETH01
+  // LAN8720 RMII pins for WT32-ETH01
   #define ETH_PHY_ADDR_WT    1
   #define ETH_PHY_POWER_WT   16
   #define ETH_PHY_MDC_WT     23
@@ -27,10 +27,7 @@ static void onNetEvent(WiFiEvent_t event) {
       Serial.println("[ETH] Link up");
       break;
     case ARDUINO_EVENT_ETH_GOT_IP:
-      Serial.printf("[ETH] IP: %s  (%s %s)\n",
-                    ETH.localIP().toString().c_str(),
-                    ETH.fullDuplex() ? "FULL" : "HALF",
-                    (ETH.linkSpeed() == 100) ? "100Mbps" : "10Mbps");
+      Serial.printf("[ETH] IP: %s\n", ETH.localIP().toString().c_str());
       eth_got_ip = true;
       break;
     case ARDUINO_EVENT_ETH_DISCONNECTED:
