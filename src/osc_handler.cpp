@@ -66,8 +66,8 @@ void handleOsc(WiFiUDP& udp, DeviceConfig& cfg, PatternState& state) {
     return;
   }
 
-  // Built-in: /led/off always stops the current pattern
-  if (msg.fullMatch("/led/off")) {
+  // Built-in: /led/off and /clear both stop the current pattern
+  if (msg.fullMatch("/led/off") || msg.fullMatch("/clear")) {
     stopPattern(state, leds, NUM_LEDS);
     return;
   }
