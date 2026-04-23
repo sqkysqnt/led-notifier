@@ -32,12 +32,13 @@
 #define NUM_RINGS         3
 
 // BOOT button pin differs by board:
-//   ESP32-C3 / S3:    GPIO9
-//   ESP-WROOM-32:     GPIO0
-#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32S3)
+//   ESP32-C3 XIAO:              GPIO9
+//   ESP-WROOM-32 / WT32-ETH01:  GPIO0
+//   ESP32-S3 dev boards:        GPIO0
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
   #define BOOT_BUTTON_PIN   9
 #else
-  #define BOOT_BUTTON_PIN   0     // ESP-WROOM-32 BOOT button
+  #define BOOT_BUTTON_PIN   0
 #endif
 
 // ============================================================

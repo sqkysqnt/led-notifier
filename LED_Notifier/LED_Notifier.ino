@@ -43,6 +43,7 @@ static inline void addWS2812BPin() {
 
 static void initLedsOnPin(uint8_t pin) {
   switch (pin) {
+    // Pins valid on all ESP32 variants we support
     case  2: addWS2812BPin< 2>(); break;
     case  4: addWS2812BPin< 4>(); break;
     case  5: addWS2812BPin< 5>(); break;
@@ -55,13 +56,35 @@ static void initLedsOnPin(uint8_t pin) {
     case 18: addWS2812BPin<18>(); break;
     case 19: addWS2812BPin<19>(); break;
     case 21: addWS2812BPin<21>(); break;
+
+#if defined(CONFIG_IDF_TARGET_ESP32)
+    // Classic ESP32 / WROOM-32 only (not present on S3)
     case 22: addWS2812BPin<22>(); break;
     case 23: addWS2812BPin<23>(); break;
     case 25: addWS2812BPin<25>(); break;
     case 26: addWS2812BPin<26>(); break;
     case 27: addWS2812BPin<27>(); break;
     case 32: addWS2812BPin<32>(); break;
+#endif
+
+    // GPIO33 exists on both classic ESP32 and S3
     case 33: addWS2812BPin<33>(); break;
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+    // ESP32-S3-only GPIOs
+    case 35: addWS2812BPin<35>(); break;
+    case 36: addWS2812BPin<36>(); break;
+    case 37: addWS2812BPin<37>(); break;
+    case 38: addWS2812BPin<38>(); break;
+    case 39: addWS2812BPin<39>(); break;
+    case 40: addWS2812BPin<40>(); break;
+    case 41: addWS2812BPin<41>(); break;
+    case 42: addWS2812BPin<42>(); break;
+    case 45: addWS2812BPin<45>(); break;
+    case 47: addWS2812BPin<47>(); break;
+    case 48: addWS2812BPin<48>(); break;
+#endif
+
     default: addWS2812BPin<DEFAULT_LED_PIN>(); break;
   }
 }
