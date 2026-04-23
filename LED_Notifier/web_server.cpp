@@ -1,6 +1,8 @@
 #include "web_server.h"
 #include "web_ui.h"
 #include "patterns.h"
+#include "network.h"
+#include "sacn_handler.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
 
@@ -36,6 +38,13 @@ static void handleGetConfig() {
   for (int i = 0; i < NUM_RINGS; i++) offs.add((int)deviceConfig.ringOffset[i]);
   JsonArray revs = doc["ringReverse"].to<JsonArray>();
   for (int i = 0; i < NUM_RINGS; i++) revs.add(deviceConfig.ringReverse[i]);
+  doc["ledPin"] = deviceConfig.ledPin;
+  doc["sacnEnabled"] = deviceConfig.sacnEnabled;
+  doc["sacnUniverse"] = deviceConfig.sacnUniverse;
+  doc["sacnStartAddr"] = deviceConfig.sacnStartAddr;
+  doc["sacnPriority"] = deviceConfig.sacnPriority;
+  doc["sacnMulticast"] = deviceConfig.sacnMulticast;
+  doc["sacnMulticastAddr"] = sacnMulticastAddress(deviceConfig.sacnUniverse);
 
   JsonArray mappings = doc["mappings"].to<JsonArray>();
   for (int i = 0; i < deviceConfig.mappingCount; i++) {
@@ -77,6 +86,13 @@ static void handlePutConfig() {
   }
 
   bool prevOta = deviceConfig.otaEnabled;
+  uint8_t prevLedPin = deviceConfig.ledPin;
+  DeviceConfig prevSacn;
+  prevSacn.sacnEnabled = deviceConfig.sacnEnabled;
+  prevSacn.sacnUniverse = deviceConfig.sacnUniverse;
+  prevSacn.sacnStartAddr = deviceConfig.sacnStartAddr;
+  prevSacn.sacnPriority = deviceConfig.sacnPriority;
+  prevSacn.sacnMulticast = deviceConfig.sacnMulticast;
   deviceConfig.globalBrightness = doc["globalBrightness"] | deviceConfig.globalBrightness;
   deviceConfig.oscPort = doc["oscPort"] | deviceConfig.oscPort;
   strncpy(deviceConfig.deviceName,
@@ -95,7 +111,19 @@ static void handlePutConfig() {
       deviceConfig.ringReverse[i] = revs[i].as<bool>();
     }
   }
+  deviceConfig.ledPin = doc["ledPin"] | deviceConfig.ledPin;
+  deviceConfig.sacnEnabled = doc["sacnEnabled"] | deviceConfig.sacnEnabled;
+  deviceConfig.sacnUniverse = doc["sacnUniverse"] | deviceConfig.sacnUniverse;
+  deviceConfig.sacnStartAddr = doc["sacnStartAddr"] | deviceConfig.sacnStartAddr;
+  deviceConfig.sacnPriority = doc["sacnPriority"] | deviceConfig.sacnPriority;
+  deviceConfig.sacnMulticast = doc["sacnMulticast"] | deviceConfig.sacnMulticast;
+
   bool otaChanged = (prevOta != deviceConfig.otaEnabled);
+  bool ledPinChanged = (prevLedPin != deviceConfig.ledPin);
+  bool sacnChanged = (prevSacn.sacnEnabled != deviceConfig.sacnEnabled ||
+                      prevSacn.sacnUniverse != deviceConfig.sacnUniverse ||
+                      prevSacn.sacnStartAddr != deviceConfig.sacnStartAddr ||
+                      prevSacn.sacnMulticast != deviceConfig.sacnMulticast);
 
   FastLED.setBrightness(deviceConfig.globalBrightness);
 
@@ -119,7 +147,12 @@ static void handlePutConfig() {
   }
 
   saveConfig(deviceConfig);
-  if (otaChanged) {
+
+  // Apply sACN changes immediately (no reboot needed)
+  if (sacnChanged) initSacn(deviceConfig);
+
+  bool rebootNeeded = otaChanged || ledPinChanged;
+  if (rebootNeeded) {
     _server->send(200, "application/json", "{\"ok\":true,\"rebootRequired\":true}");
   } else {
     _server->send(200, "application/json", "{\"ok\":true}");
@@ -141,6 +174,12 @@ static void handleExportConfig() {
   for (int i = 0; i < NUM_RINGS; i++) offs.add((int)deviceConfig.ringOffset[i]);
   JsonArray revs = doc["ringReverse"].to<JsonArray>();
   for (int i = 0; i < NUM_RINGS; i++) revs.add(deviceConfig.ringReverse[i]);
+  doc["ledPin"] = deviceConfig.ledPin;
+  doc["sacnEnabled"] = deviceConfig.sacnEnabled;
+  doc["sacnUniverse"] = deviceConfig.sacnUniverse;
+  doc["sacnStartAddr"] = deviceConfig.sacnStartAddr;
+  doc["sacnPriority"] = deviceConfig.sacnPriority;
+  doc["sacnMulticast"] = deviceConfig.sacnMulticast;
   JsonArray mappings = doc["mappings"].to<JsonArray>();
   for (int i = 0; i < deviceConfig.mappingCount; i++) {
     const OscMapping& slot = deviceConfig.mappings[i];
@@ -234,13 +273,17 @@ static void handleStop() {
 static void handleStatus() {
   sendCors();
   JsonDocument doc;
-  doc["ip"] = WiFi.localIP().toString();
+  doc["ip"] = currentIP().toString();
+  doc["network"] = currentNetworkMode();
   doc["deviceName"] = deviceConfig.deviceName;
   doc["uptime"] = millis();
   doc["freeHeap"] = ESP.getFreeHeap();
-  doc["rssi"] = WiFi.RSSI();
+  doc["rssi"] = (strcmp(currentNetworkMode(), "wifi") == 0) ? WiFi.RSSI() : 0;
   doc["oscPort"] = deviceConfig.oscPort;
   doc["numLeds"] = NUM_LEDS;
+  doc["ledPin"] = deviceConfig.ledPin;
+  doc["sacnEnabled"] = deviceConfig.sacnEnabled;
+  doc["sacnActive"] = sacnIsActive();
 
   if (currentPattern.running && currentPattern.activePatternId >= 0) {
     doc["activePattern"] = patternRegistry[currentPattern.activePatternId].displayName;

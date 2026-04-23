@@ -5,9 +5,14 @@
 #include <FastLED.h>
 
 // ============================================================
-// Hardware Configuration — CHANGE THESE IF YOUR BOARD DIFFERS
+// Hardware Configuration
+// Default pin comes from build flags (platformio.ini):
+//   -DDEFAULT_LED_PIN=N
+// The actual pin used at runtime is stored in DeviceConfig.ledPin.
 // ============================================================
-#define LED_PIN           2       // GPIO2 — WS2812B data line
+#ifndef DEFAULT_LED_PIN
+  #define DEFAULT_LED_PIN 2
+#endif
 #define LED_COLOR_ORDER   GRB     // WS2812B standard
 
 // ============================================================
@@ -79,9 +84,17 @@ struct DeviceConfig {
   char deviceName[MAX_DEVICE_NAME_LEN];
   OscMapping mappings[MAX_MAPPINGS];
   uint8_t mappingCount;
-  bool otaEnabled;            // enable ArduinoOTA over WiFi
+  bool otaEnabled;            // enable ArduinoOTA
   int8_t ringOffset[NUM_RINGS];  // per-ring rotation offset in LEDs (signed)
   bool ringReverse[NUM_RINGS];   // per-ring direction reversal
+  uint8_t ledPin;             // GPIO for WS2812B data line
+
+  // sACN / E1.31 receive
+  bool sacnEnabled;
+  uint16_t sacnUniverse;      // 1..63999
+  uint16_t sacnStartAddr;     // 1..512 (DMX start channel)
+  uint8_t sacnPriority;       // 0..200, we keep only highest-priority source
+  bool sacnMulticast;         // true = multicast, false = unicast (listen-only)
 };
 
 // Runtime state for the active pattern

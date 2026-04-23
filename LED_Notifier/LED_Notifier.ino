@@ -1,19 +1,14 @@
-// LED Notifier — ESP32-C3 + 24x WS2812B Ring
-// WiFiManager + OSC Control + Web Configuration
+// LED Notifier — ESP32 + WS2812B concentric rings
+// Supports generic ESP-WROOM-32 (WiFi) and WT32-ETH01 (Ethernet + WiFi fallback).
+// Features: OSC, sACN/E1.31, Web UI, configurable LED pin, OTA.
 //
-// Libraries required (Arduino IDE Library Manager):
-//   - FastLED (>= 3.7.0)
-//   - WiFiManager by tzapu (>= 2.0.17)
-//   - OSC by Adrian Freed & Yotam Mann (CNMAT)
-//   - ArduinoJson (>= 7.0)
-//
-// Board: ESP32C3 Dev Module (esp32 by Espressif >= 3.0.0)
-// Partition: Default 4MB with spiffs
+// Build with PlatformIO:
+//   pio run -e esp32dev   -t upload
+//   pio run -e wt32-eth01 -t upload
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WebServer.h>
-#include <WiFiManager.h>
 #include <FastLED.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
@@ -24,6 +19,8 @@
 #include "patterns.h"
 #include "osc_handler.h"
 #include "web_server.h"
+#include "network.h"
+#include "sacn_handler.h"
 
 // ============================================================
 // Globals
@@ -33,6 +30,41 @@ DeviceConfig deviceConfig;
 PatternState currentPattern;
 WiFiUDP oscUdp;
 WebServer webServer(80);
+
+// ============================================================
+// FastLED runtime-pin dispatch
+// FastLED requires the data pin as a template parameter, so we
+// register one explicit instantiation per allowed GPIO.
+// ============================================================
+template <uint8_t PIN>
+static inline void addWS2812BPin() {
+  FastLED.addLeds<WS2812B, PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
+}
+
+static void initLedsOnPin(uint8_t pin) {
+  switch (pin) {
+    case  2: addWS2812BPin< 2>(); break;
+    case  4: addWS2812BPin< 4>(); break;
+    case  5: addWS2812BPin< 5>(); break;
+    case 12: addWS2812BPin<12>(); break;
+    case 13: addWS2812BPin<13>(); break;
+    case 14: addWS2812BPin<14>(); break;
+    case 15: addWS2812BPin<15>(); break;
+    case 16: addWS2812BPin<16>(); break;
+    case 17: addWS2812BPin<17>(); break;
+    case 18: addWS2812BPin<18>(); break;
+    case 19: addWS2812BPin<19>(); break;
+    case 21: addWS2812BPin<21>(); break;
+    case 22: addWS2812BPin<22>(); break;
+    case 23: addWS2812BPin<23>(); break;
+    case 25: addWS2812BPin<25>(); break;
+    case 26: addWS2812BPin<26>(); break;
+    case 27: addWS2812BPin<27>(); break;
+    case 32: addWS2812BPin<32>(); break;
+    case 33: addWS2812BPin<33>(); break;
+    default: addWS2812BPin<DEFAULT_LED_PIN>(); break;
+  }
+}
 
 // ============================================================
 // Startup animation — quick color wipe to show board is alive
@@ -48,10 +80,7 @@ static void startupAnimation() {
   FastLED.show();
 }
 
-// ============================================================
-// WiFi connected animation — green flash
-// ============================================================
-static void wifiConnectedAnimation() {
+static void networkConnectedAnimation() {
   for (int j = 0; j < 3; j++) {
     fill_solid(leds, NUM_LEDS, CRGB(0, 80, 0));
     FastLED.show();
@@ -73,71 +102,51 @@ void setup() {
   // BOOT button — hold during startup to reset WiFi credentials
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
 
-  // Initialize LEDs
-  FastLED.addLeds<WS2812B, LED_PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
-  FastLED.setBrightness(50);
-  startupAnimation();
-
-  // Initialize filesystem and load config
+  // Initialize filesystem and load config (need ledPin from config before LED init)
   if (!LittleFS.begin(true)) {
     Serial.println("[FS] LittleFS mount failed!");
   }
   loadConfig(deviceConfig);
+
+  // Initialize LEDs on the configured pin
+  Serial.printf("[LED] Using GPIO%u for %d LEDs\n", deviceConfig.ledPin, NUM_LEDS);
+  initLedsOnPin(deviceConfig.ledPin);
+  FastLED.setBrightness(50);
+  startupAnimation();
   FastLED.setBrightness(deviceConfig.globalBrightness);
 
   // Initialize pattern state
   initPatternState(currentPattern);
 
-  // WiFiManager
-  WiFiManager wm;
-  wm.setConfigPortalTimeout(180);
-  wm.setAPCallback([](WiFiManager* wm) {
-    Serial.println("[WiFi] Config portal started");
-    // Show orange while in portal mode
-    fill_solid(leds, NUM_LEDS, CRGB(80, 40, 0));
-    FastLED.show();
-  });
-
-  // Check if BOOT button is held — force config portal.
-  // GPIO0 on WROOM-32 can be held low by the USB-serial DTR line,
-  // so require a sustained 2-second press to avoid false triggers.
+  // Check if BOOT button is held — force WiFi portal.
   bool forcePortal = false;
   if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
-    Serial.println("[WiFi] BOOT button detected — hold 2s to reset WiFi...");
+    Serial.println("[Net] BOOT button detected — hold 2s to reset WiFi...");
     fill_solid(leds, NUM_LEDS, CRGB(80, 0, 80));
     FastLED.show();
     unsigned long holdStart = millis();
     forcePortal = true;
     while (millis() - holdStart < 2000) {
-      if (digitalRead(BOOT_BUTTON_PIN) != LOW) {
-        forcePortal = false;
-        break;
-      }
+      if (digitalRead(BOOT_BUTTON_PIN) != LOW) { forcePortal = false; break; }
       delay(50);
     }
   }
-  if (forcePortal) {
-    Serial.println("[WiFi] BOOT button confirmed — forcing config portal");
-    wm.resetSettings();
-  } else {
+  if (!forcePortal) {
     fill_solid(leds, NUM_LEDS, CRGB::Black);
     FastLED.show();
   }
 
-  // Attempt auto-connect; if fails, start config portal
+  // Bring up network (Ethernet first on WT32-ETH01, then WiFi fallback)
   String apName = String("LED-Notifier-") + String((uint32_t)ESP.getEfuseMac() & 0xFFFF, HEX);
-  if (!wm.autoConnect(apName.c_str())) {
-    Serial.println("[WiFi] Failed to connect, restarting...");
+  if (!initNetwork(apName.c_str(), forcePortal)) {
+    Serial.println("[Net] No network — restarting...");
     fill_solid(leds, NUM_LEDS, CRGB(80, 0, 0));
     FastLED.show();
     delay(2000);
     ESP.restart();
   }
-
-  // Connected!
-  Serial.printf("[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-  WiFi.setSleep(false);  // Disable WiFi power save — required for reliable incoming connections
-  wifiConnectedAnimation();
+  Serial.printf("[Net] Mode=%s IP=%s\n", currentNetworkMode(), currentIP().toString().c_str());
+  networkConnectedAnimation();
 
   // Start mDNS — include MAC suffix for uniqueness across devices
   char mdnsName[64];
@@ -179,6 +188,9 @@ void setup() {
   // Start OSC listener
   initOsc(oscUdp, deviceConfig.oscPort);
 
+  // Start sACN listener (if enabled)
+  initSacn(deviceConfig);
+
   // Start web server
   setupWebRoutes(webServer);
   webServer.begin();
@@ -194,7 +206,13 @@ void loop() {
   webServer.handleClient();
   handleOsc(oscUdp, deviceConfig, currentPattern);
   if (deviceConfig.otaEnabled) ArduinoOTA.handle();
-  updatePattern(leds, NUM_LEDS, currentPattern);
+
+  // sACN takes priority — if an sACN packet arrives, it writes directly
+  // to leds[] and we skip the pattern engine for that frame.
+  bool sacnUpdated = handleSacn(leds, deviceConfig);
+  if (!sacnUpdated) {
+    updatePattern(leds, NUM_LEDS, currentPattern);
+  }
 
   // Rate-limit LED updates to ~60fps
   static unsigned long lastShow = 0;
@@ -204,7 +222,5 @@ void loop() {
     lastShow = now;
   }
 
-  // Yield to WiFi/system tasks — prevents WDT on ESP-WROOM-32
-  // and ensures UDP/TCP packets are processed promptly
   delay(1);
 }

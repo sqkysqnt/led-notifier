@@ -181,6 +181,63 @@ input[type="range"]{width:100%;accent-color:#e94560}
     </div>
 
     <div class="card">
+      <h3>Hardware</h3>
+      <label>WS2812B data pin (GPIO)</label>
+      <select id="s-ledpin">
+        <option value="2">GPIO 2</option>
+        <option value="4">GPIO 4</option>
+        <option value="5">GPIO 5</option>
+        <option value="12">GPIO 12</option>
+        <option value="13">GPIO 13</option>
+        <option value="14">GPIO 14</option>
+        <option value="15">GPIO 15</option>
+        <option value="16">GPIO 16</option>
+        <option value="17">GPIO 17</option>
+        <option value="18">GPIO 18</option>
+        <option value="19">GPIO 19</option>
+        <option value="21">GPIO 21</option>
+        <option value="22">GPIO 22</option>
+        <option value="23">GPIO 23</option>
+        <option value="25">GPIO 25</option>
+        <option value="26">GPIO 26</option>
+        <option value="27">GPIO 27</option>
+        <option value="32">GPIO 32</option>
+        <option value="33">GPIO 33</option>
+      </select>
+      <p style="font-size:.8em;color:#888;margin-top:6px">Change requires a reboot. On WT32-ETH01 avoid GPIOs 0, 16-19, 21-23, 25-27 (used by Ethernet).</p>
+    </div>
+
+    <div class="card">
+      <h3>sACN / E1.31 (DMX over IP)</h3>
+      <div class="checkbox-row">
+        <input type="checkbox" id="s-sacn-en">
+        <label for="s-sacn-en" style="display:inline;margin:0">Enable sACN receive</label>
+      </div>
+      <div class="row">
+        <div>
+          <label>Universe (1-63999)</label>
+          <input type="number" id="s-sacn-univ" min="1" max="63999" value="1">
+        </div>
+        <div>
+          <label>Start address (1-512)</label>
+          <input type="number" id="s-sacn-start" min="1" max="512" value="1">
+        </div>
+        <div>
+          <label>Priority (0-200)</label>
+          <input type="number" id="s-sacn-prio" min="0" max="200" value="100">
+        </div>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="s-sacn-mcast" checked>
+        <label for="s-sacn-mcast" style="display:inline;margin:0">Multicast (uncheck for unicast)</label>
+      </div>
+      <p style="font-size:.85em;color:#888;margin-top:6px">
+        Multicast address: <span id="s-sacn-addr" style="color:#00ff88;font-family:monospace">—</span><br>
+        Channels used: <span id="s-sacn-chans" style="color:#00ff88;font-family:monospace">—</span>
+      </p>
+    </div>
+
+    <div class="card">
       <h3>Backup & Restore</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-secondary" onclick="exportConfig()">Export Config</button>
@@ -444,7 +501,37 @@ function renderSettings() {
     document.getElementById('s-off' + i + '-val').textContent = offs[i] || 0;
     document.getElementById('s-rev' + i).checked = !!revs[i];
   }
+  if (config.ledPin != null) document.getElementById('s-ledpin').value = String(config.ledPin);
+  document.getElementById('s-sacn-en').checked = !!config.sacnEnabled;
+  document.getElementById('s-sacn-univ').value = config.sacnUniverse || 1;
+  document.getElementById('s-sacn-start').value = config.sacnStartAddr || 1;
+  document.getElementById('s-sacn-prio').value = config.sacnPriority != null ? config.sacnPriority : 100;
+  document.getElementById('s-sacn-mcast').checked = (config.sacnMulticast !== false);
+  updateSacnDisplay();
 }
+
+function computeMcastAddr(univ) {
+  univ = parseInt(univ) || 1;
+  return '239.255.' + ((univ >> 8) & 0xFF) + '.' + (univ & 0xFF);
+}
+function updateSacnDisplay() {
+  const univ = document.getElementById('s-sacn-univ').value;
+  const start = parseInt(document.getElementById('s-sacn-start').value) || 1;
+  const mc = document.getElementById('s-sacn-mcast').checked;
+  document.getElementById('s-sacn-addr').textContent = mc ? computeMcastAddr(univ) : 'unicast (port 5568)';
+  const need = 47 * 3;
+  const end = start + need - 1;
+  document.getElementById('s-sacn-chans').textContent =
+    end > 512
+      ? `${start}-${end}  ⚠ overflows 512`
+      : `${start}-${end}  (${need} channels)`;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  ['s-sacn-univ','s-sacn-start','s-sacn-mcast'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateSacnDisplay);
+  });
+});
 
 async function saveSettings() {
   config.deviceName = document.getElementById('s-name').value.trim();
@@ -461,9 +548,15 @@ async function saveSettings() {
     document.getElementById('s-rev1').checked,
     document.getElementById('s-rev2').checked
   ];
+  config.ledPin = parseInt(document.getElementById('s-ledpin').value);
+  config.sacnEnabled = document.getElementById('s-sacn-en').checked;
+  config.sacnUniverse = parseInt(document.getElementById('s-sacn-univ').value);
+  config.sacnStartAddr = parseInt(document.getElementById('s-sacn-start').value);
+  config.sacnPriority = parseInt(document.getElementById('s-sacn-prio').value);
+  config.sacnMulticast = document.getElementById('s-sacn-mcast').checked;
   try {
     const r = await api('PUT', '/api/config', config);
-    toast(r.rebootRequired ? 'Saved — reboot to apply OTA change' : 'Settings saved');
+    toast(r.rebootRequired ? 'Saved — reboot to apply pin/OTA change' : 'Settings saved');
   } catch (e) { toast('Failed to save', true); }
 }
 
@@ -565,14 +658,17 @@ async function loadStatus() {
     const s = await api('GET', '/api/status');
     const grid = document.getElementById('status-grid');
     grid.innerHTML = [
+      { label: 'Network', value: (s.network || 'wifi').toUpperCase() },
       { label: 'IP Address', value: s.ip || '-' },
       { label: 'Device Name', value: s.deviceName || '-' },
       { label: 'Uptime', value: formatUptime(s.uptime || 0) },
       { label: 'Free Heap', value: (s.freeHeap || 0).toLocaleString() + ' bytes' },
-      { label: 'WiFi RSSI', value: (s.rssi || 0) + ' dBm' },
+      { label: 'WiFi RSSI', value: (s.network === 'wifi' ? (s.rssi || 0) + ' dBm' : 'n/a') },
       { label: 'OSC Port', value: s.oscPort || '-' },
       { label: 'Active Pattern', value: s.activePattern || 'None' },
       { label: 'LED Count', value: s.numLeds || '-' },
+      { label: 'LED Pin', value: 'GPIO ' + (s.ledPin != null ? s.ledPin : '-') },
+      { label: 'sACN', value: s.sacnEnabled ? (s.sacnActive ? 'Receiving' : 'Listening') : 'Disabled' },
     ].map(i => `<div class="status-item"><div class="label">${i.label}</div><div class="value">${i.value}</div></div>`).join('');
   } catch (e) { toast('Failed to load status', true); }
 }

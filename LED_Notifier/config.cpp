@@ -12,6 +12,12 @@ void resetConfigDefaults(DeviceConfig& cfg) {
     cfg.ringOffset[i] = 0;
     cfg.ringReverse[i] = false;
   }
+  cfg.ledPin = DEFAULT_LED_PIN;
+  cfg.sacnEnabled = false;
+  cfg.sacnUniverse = 1;
+  cfg.sacnStartAddr = 1;
+  cfg.sacnPriority = 100;
+  cfg.sacnMulticast = true;
   memset(cfg.mappings, 0, sizeof(cfg.mappings));
 }
 
@@ -45,6 +51,12 @@ void loadConfig(DeviceConfig& cfg) {
     cfg.ringOffset[i] = (i < (int)offs.size()) ? (int8_t)offs[i].as<int>() : 0;
     cfg.ringReverse[i] = (i < (int)revs.size()) ? revs[i].as<bool>() : false;
   }
+  cfg.ledPin = doc["ledPin"] | DEFAULT_LED_PIN;
+  cfg.sacnEnabled = doc["sacnEnabled"] | false;
+  cfg.sacnUniverse = doc["sacnUniverse"] | 1;
+  cfg.sacnStartAddr = doc["sacnStartAddr"] | 1;
+  cfg.sacnPriority = doc["sacnPriority"] | 100;
+  cfg.sacnMulticast = doc["sacnMulticast"] | true;
 
   JsonArray mappings = doc["mappings"];
   cfg.mappingCount = 0;
@@ -81,6 +93,12 @@ void saveConfig(const DeviceConfig& cfg) {
   for (int i = 0; i < NUM_RINGS; i++) offs.add((int)cfg.ringOffset[i]);
   JsonArray revs = doc["ringReverse"].to<JsonArray>();
   for (int i = 0; i < NUM_RINGS; i++) revs.add(cfg.ringReverse[i]);
+  doc["ledPin"] = cfg.ledPin;
+  doc["sacnEnabled"] = cfg.sacnEnabled;
+  doc["sacnUniverse"] = cfg.sacnUniverse;
+  doc["sacnStartAddr"] = cfg.sacnStartAddr;
+  doc["sacnPriority"] = cfg.sacnPriority;
+  doc["sacnMulticast"] = cfg.sacnMulticast;
 
   JsonArray mappings = doc["mappings"].to<JsonArray>();
   for (int i = 0; i < cfg.mappingCount; i++) {
